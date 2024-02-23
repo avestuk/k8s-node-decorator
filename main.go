@@ -32,6 +32,7 @@ import (
 
 	metadata "github.com/linode/go-metadata"
 	decorator "github.com/linode/k8s-node-decorator/k8snodedecorator"
+	"github.com/linode/linodego"
 )
 
 var (
@@ -61,7 +62,7 @@ func SetLabel(node *corev1.Node, key, newValue string) (changed bool) {
 
 func UpdateNodeLabels(
 	clientset *kubernetes.Clientset,
-	instanceData *metadata.InstanceData,
+	instanceData *instanceWatcherData,
 ) error {
 	if instanceData == nil {
 		return fmt.Errorf("instance data received from Linode metadata service is nil")
@@ -81,16 +82,16 @@ func UpdateNodeLabels(
 		}
 	}
 
-	handleUpdated(SetLabel(node, "decorator.linode.com/label", instanceData.Label))
-	handleUpdated(SetLabel(node, "decorator.linode.com/instance-id", strconv.Itoa(instanceData.ID)))
-	handleUpdated(SetLabel(node, "decorator.linode.com/region", instanceData.Region))
-	handleUpdated(SetLabel(node, "decorator.linode.com/instance-type", instanceData.Type))
-	handleUpdated(SetLabel(node, "decorator.linode.com/host", instanceData.HostUUID))
+	handleUpdated(SetLabel(node, "decorator.linode.com/label", instanceData.label))
+	handleUpdated(SetLabel(node, "decorator.linode.com/instance-id", instanceData.id))
+	handleUpdated(SetLabel(node, "decorator.linode.com/region", instanceData.region))
+	handleUpdated(SetLabel(node, "decorator.linode.com/instance-type", instanceData.instanceType))
+	handleUpdated(SetLabel(node, "decorator.linode.com/host", instanceData.hostUUID))
 
 	oldTags := make(map[string]string)
 	maps.Copy(oldTags, node.Labels)
 
-	newTags := decorator.ParseTags(instanceData.Tags)
+	newTags := decorator.ParseTags(instanceData.tags)
 
 	for key := range oldTags {
 		if !strings.HasPrefix(key, decorator.TagLabelPrefix) {
@@ -137,8 +138,119 @@ func GetClientset() (*kubernetes.Clientset, error) {
 	return clientset, nil
 }
 
-func StartDecorator(client metadata.Client, clientset *kubernetes.Clientset, interval time.Duration) {
-	instanceData, err := client.GetInstance(context.TODO())
+type instanceWatcherData struct {
+	label        string
+	id           string
+	region       string
+	instanceType string
+	hostUUID     string
+	tags         []string
+}
+
+func (i *instanceWatcherData) GetLabel() string    { return i.label }
+func (i *instanceWatcherData) GetID() string       { return i.id }
+func (i *instanceWatcherData) GetRegion() string   { return i.region }
+func (i *instanceWatcherData) GetType() string     { return i.instanceType }
+func (i *instanceWatcherData) GetHostUUID() string { return i.hostUUID }
+func (i *instanceWatcherData) GetTags() []string   { return i.tags }
+
+type watcher interface {
+	GetInstance(context.Context) (*instanceWatcherData, error)
+	Watch() (<-chan *instanceWatcherData, <-chan error)
+}
+
+type metadataWatcher struct {
+	client   metadata.Client
+	interval time.Duration
+	Updates  chan *instanceWatcherData
+}
+
+func (mw *metadataWatcher) GetInstance(ctx context.Context) (*instanceWatcherData, error) {
+	data, err := mw.client.GetInstance(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &instanceWatcherData{
+		label:        data.Label,
+		id:           strconv.Itoa(data.ID),
+		region:       data.Region,
+		instanceType: data.Type,
+		hostUUID:     data.HostUUID,
+		tags:         data.Tags,
+	}, nil
+}
+
+func (mw *metadataWatcher) Watch() (<-chan *instanceWatcherData, <-chan error) {
+	instanceWatcher := mw.client.NewInstanceWatcher(
+		metadata.WatcherWithInterval(mw.interval),
+	)
+
+	go instanceWatcher.Start(context.TODO())
+
+	go func() {
+		for {
+			data := <-instanceWatcher.Updates
+			mw.Updates <- &instanceWatcherData{
+				label:        data.Label,
+				id:           strconv.Itoa(data.ID),
+				region:       data.Region,
+				instanceType: data.Type,
+				hostUUID:     data.HostUUID,
+				tags:         data.Tags,
+			}
+		}
+	}()
+
+	return mw.Updates, instanceWatcher.Errors
+}
+
+type restWatcher struct {
+	client   linodego.Client
+	interval time.Duration
+	linodeID int
+	Updates  chan *instanceWatcherData
+	Errors   chan error
+}
+
+func (rw *restWatcher) GetInstance(context.Context) (*instanceWatcherData, error) {
+	data, err := rw.client.GetInstance(context.TODO(), rw.linodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &instanceWatcherData{
+		label:        data.Label,
+		id:           strconv.Itoa(data.ID),
+		region:       data.Region,
+		instanceType: data.Label,
+		hostUUID:     data.HostUUID,
+		tags:         data.Tags,
+	}, nil
+}
+
+func (rw *restWatcher) Watch() (<-chan *instanceWatcherData, <-chan error) {
+	go func() {
+		ticker := time.NewTicker(rw.interval)
+
+		for {
+			<-ticker.C
+			data, err := rw.GetInstance(context.TODO())
+			if err != nil {
+				rw.Errors <- err
+			}
+
+			rw.Updates <- data
+
+		}
+	}()
+
+	return rw.Updates, rw.Errors
+}
+
+func StartDecorator(instanceWatcher watcher, clientset *kubernetes.Clientset) {
+	// Must be able to GetInstance
+	instanceData, err := instanceWatcher.GetInstance(context.TODO())
 	if err != nil {
 		klog.Fatalf("Failed to get the initial instance data: %s", err.Error())
 	}
@@ -148,20 +260,16 @@ func StartDecorator(client metadata.Client, clientset *kubernetes.Clientset, int
 		klog.Error(err)
 	}
 
-	instanceWatcher := client.NewInstanceWatcher(
-		metadata.WatcherWithInterval(interval),
-	)
-
-	go instanceWatcher.Start(context.Background())
+	updates, errors := instanceWatcher.Watch()
 
 	for {
 		select {
-		case data := <-instanceWatcher.Updates:
+		case data := <-updates:
 			err = UpdateNodeLabels(clientset, data)
 			if err != nil {
 				klog.Fatal(err)
 			}
-		case err := <-instanceWatcher.Errors:
+		case err := <-errors:
 			klog.Errorf("Got error from instance watcher: %s", err)
 		}
 	}
@@ -173,10 +281,19 @@ func main() {
 		klog.Fatal("Environment variable NODE_NAME is not set")
 	}
 
-	var interval time.Duration
+	var (
+		interval   time.Duration
+		useRESTAPI bool
+	)
 	flag.DurationVar(
 		&interval, "poll-interval", 5*time.Minute,
 		"The time interval to poll and update node information",
+	)
+	flag.BoolVar(
+		&useRESTAPI,
+		"use-rest",
+		false,
+		"Whether to use the Linode REST API instead of the metadata service",
 	)
 	flag.Parse()
 
@@ -193,13 +310,36 @@ func main() {
 		klog.Fatal(err)
 	}
 
-	client, err := metadata.NewClient(
-		context.Background(),
-		metadata.ClientWithManagedToken(),
-	)
-	if err != nil {
-		klog.Fatal(err)
+	var metadataClient watcher
+	if useRESTAPI {
+		client, err := linodego.NewClientFromEnv(nil)
+		if err != nil {
+			klog.Fatal(err)
+		}
+
+		metadataClient = &restWatcher{
+			client:   *client,
+			interval: interval,
+			// TODO How do we get this?
+			linodeID: 0,
+			Updates:  make(chan *instanceWatcherData),
+			Errors:   make(chan error),
+		}
+
+	} else {
+		client, err := metadata.NewClient(
+			context.Background(),
+			metadata.ClientWithManagedToken(),
+		)
+		if err != nil {
+			klog.Fatal(err)
+		}
+		metadataClient = &metadataWatcher{
+			client:   *client,
+			interval: interval,
+			Updates:  make(chan *instanceWatcherData),
+		}
 	}
 
-	StartDecorator(*client, clientset, interval)
+	StartDecorator(metadataClient, clientset)
 }
