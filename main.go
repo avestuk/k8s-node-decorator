@@ -32,7 +32,7 @@ import (
 
 	metadata "github.com/linode/go-metadata"
 	decorator "github.com/linode/k8s-node-decorator/k8snodedecorator"
-	ccm "github.com/linode/linode-cloud-controller-manager/pkg/linodeid"
+	"github.com/linode/linode-cloud-controller-manager/pkg/linodeid"
 	"github.com/linode/linodego"
 )
 
@@ -355,7 +355,7 @@ func getNodeID(clientset *kubernetes.Clientset) (int, error) {
 		return 0, fmt.Errorf("kubernetes node ProviderID is empty and therefore cannot proceed")
 	}
 
-	linodeID, err := ccm.ParseProviderID(node.Spec.ProviderID)
+	linodeID, err := linodeid.ParseProviderID(node.Spec.ProviderID)
 	if err != nil {
 		return 0, err
 	}
