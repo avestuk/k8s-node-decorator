@@ -4,6 +4,7 @@ go 1.21
 
 require (
 	github.com/linode/go-metadata v0.1.0
+	github.com/linode/linode-cloud-controller-manager v0.0.0-00010101000000-000000000000
 	github.com/linode/linodego v1.29.0
 	k8s.io/api v0.28.4
 	k8s.io/apimachinery v0.28.4
@@ -49,3 +50,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
+
+replace github.com/linode/linode-cloud-controller-manager => github.com/avestuk/linode-cloud-controller-manager v0.0.0-20240227133600-d4fe680635c2
