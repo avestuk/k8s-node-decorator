@@ -32,6 +32,7 @@ import (
 
 	metadata "github.com/linode/go-metadata"
 	decorator "github.com/linode/k8s-node-decorator/k8snodedecorator"
+	ccm "github.com/linode/linode-cloud-controller-manager/pkg/linodeid"
 	"github.com/linode/linodego"
 )
 
@@ -138,6 +139,8 @@ func GetClientset() (*kubernetes.Clientset, error) {
 	return clientset, nil
 }
 
+// instanceWatcherData holds all the common fields that different metadata
+// clients can set as labels on a node
 type instanceWatcherData struct {
 	label        string
 	id           string
@@ -147,13 +150,7 @@ type instanceWatcherData struct {
 	tags         []string
 }
 
-func (i *instanceWatcherData) GetLabel() string    { return i.label }
-func (i *instanceWatcherData) GetID() string       { return i.id }
-func (i *instanceWatcherData) GetRegion() string   { return i.region }
-func (i *instanceWatcherData) GetType() string     { return i.instanceType }
-func (i *instanceWatcherData) GetHostUUID() string { return i.hostUUID }
-func (i *instanceWatcherData) GetTags() []string   { return i.tags }
-
+// watcher is the interface that various metadata clients must implement
 type watcher interface {
 	GetInstance(context.Context) (*instanceWatcherData, error)
 	Watch() (<-chan *instanceWatcherData, <-chan error)
@@ -249,7 +246,6 @@ func (rw *restWatcher) Watch() (<-chan *instanceWatcherData, <-chan error) {
 }
 
 func StartDecorator(instanceWatcher watcher, clientset *kubernetes.Clientset) {
-	// Must be able to GetInstance
 	instanceData, err := instanceWatcher.GetInstance(context.TODO())
 	if err != nil {
 		klog.Fatalf("Failed to get the initial instance data: %s", err.Error())
@@ -311,22 +307,7 @@ func main() {
 	}
 
 	var metadataClient watcher
-	if useRESTAPI {
-		client, err := linodego.NewClientFromEnv(nil)
-		if err != nil {
-			klog.Fatal(err)
-		}
-
-		metadataClient = &restWatcher{
-			client:   *client,
-			interval: interval,
-			// TODO How do we get this?
-			linodeID: 0,
-			Updates:  make(chan *instanceWatcherData),
-			Errors:   make(chan error),
-		}
-
-	} else {
+	if !useRESTAPI {
 		client, err := metadata.NewClient(
 			context.Background(),
 			metadata.ClientWithManagedToken(),
@@ -339,7 +320,45 @@ func main() {
 			interval: interval,
 			Updates:  make(chan *instanceWatcherData),
 		}
+
+	} else {
+		client, err := linodego.NewClientFromEnv(nil)
+		if err != nil {
+			klog.Fatal(err)
+		}
+
+		linodeID, err := getNodeID(clientset)
+		if err != nil {
+			klog.Fatal(err)
+		}
+
+		metadataClient = &restWatcher{
+			client:   *client,
+			interval: interval,
+			linodeID: linodeID,
+			Updates:  make(chan *instanceWatcherData),
+			Errors:   make(chan error),
+		}
 	}
 
 	StartDecorator(metadataClient, clientset)
+}
+
+// getNodeID attempts to get the LinodeID from the Kubernetes node.Spec.ProviderID
+func getNodeID(clientset *kubernetes.Clientset) (int, error) {
+	node, err := GetCurrentNode(clientset)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get current Kubernetes node, cannot get Provider ID and therefore cannot proceed, got err: %s", err)
+	}
+
+	if node.Spec.ProviderID == "" {
+		return 0, fmt.Errorf("kubernetes node ProviderID is empty and therefore cannot proceed")
+	}
+
+	linodeID, err := ccm.ParseProviderID(node.Spec.ProviderID)
+	if err != nil {
+		return 0, err
+	}
+
+	return linodeID, nil
 }
