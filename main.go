@@ -144,11 +144,11 @@ func UpdateNodeLabels(
 
 	// newTags contains the current tags that exist on the node
 	newTags := decorator.ParseTags(instanceData.tags)
-	newTags["decorator.linode.com/label"] = instanceData.label
-	newTags["decorator.linode.com/instance-id"] = instanceData.id
-	newTags["decorator.linode.com/region"] = instanceData.region
-	newTags["decorator.linode.com/instance-type"] = instanceData.instanceType
-	newTags["decorator.linode.com/host"] = instanceData.hostUUID
+	newTags["label"] = instanceData.label
+	newTags["instance-id"] = instanceData.id
+	newTags["region"] = instanceData.region
+	newTags["instance-type"] = instanceData.instanceType
+	newTags["host"] = instanceData.hostUUID
 	klog.Infof("newTags: %s", newTags)
 
 	//for key := range oldTags {

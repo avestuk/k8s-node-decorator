@@ -22,7 +22,7 @@ import (
 
 var TagSeparators = []rune{':', '='}
 
-const TagLabelPrefix = "tags.decorator.linode.com/"
+const TagLabelPrefix = ""
 
 func isSeparator(r rune) bool {
 	for _, s := range TagSeparators {
