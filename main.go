@@ -272,11 +272,6 @@ func StartDecorator(instanceWatcher watcher, clientset *kubernetes.Clientset) {
 }
 
 func main() {
-	nodeName = os.Getenv("NODE_NAME")
-	if nodeName == "" {
-		klog.Fatal("Environment variable NODE_NAME is not set")
-	}
-
 	var (
 		interval   time.Duration
 		useRESTAPI bool
@@ -292,6 +287,11 @@ func main() {
 		"Whether to use the Linode REST API instead of the metadata service",
 	)
 	flag.Parse()
+
+	nodeName = os.Getenv("NODE_NAME")
+	if nodeName == "" {
+		klog.Fatal("Environment variable NODE_NAME is not set")
+	}
 
 	klog.Infof("Starting Linode Kubernetes Node Decorator: version %s", version)
 	klog.Infof("The poll interval is set to %v.", interval)
