@@ -327,6 +327,7 @@ func main() {
 
 	var metadataClient watcher
 	if !useRESTAPI {
+		klog.Info("using metadata service")
 		client, err := metadata.NewClient(
 			context.Background(),
 			metadata.ClientWithManagedToken(),
@@ -341,6 +342,7 @@ func main() {
 		}
 
 	} else {
+		klog.Info("using rest-api")
 		client, err := linodego.NewClientFromEnv(nil)
 		if err != nil {
 			klog.Fatal(err)
