@@ -246,7 +246,7 @@ func (rw *restWatcher) GetInstance(context.Context) (*instanceWatcherData, error
 		label:        data.Label,
 		id:           strconv.Itoa(data.ID),
 		region:       data.Region,
-		instanceType: data.Label,
+		instanceType: data.Type,
 		hostUUID:     data.HostUUID,
 		tags:         data.Tags,
 	}, nil
