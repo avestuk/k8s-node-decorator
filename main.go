@@ -16,9 +16,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
-	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -87,19 +87,40 @@ func UpdateNodeLabels(
 		return fmt.Errorf("failed to get the node: %w", err)
 	}
 
-	mf := node.GetManagedFields()
-	for _, f := range mf {
-		if f.Manager == k8sNodeDecorator {
-			klog.Info(f.String())
-		}
+	oldLabels := make(map[string]struct{})
+	managedFields := node.GetManagedFields()
+	for _, field := range managedFields {
+		if field.Manager == k8sNodeDecorator {
+			var f map[string]interface{}
 
-		// Each key is either a '.' representing the field itself, and will always map to an empty set,
-		// or a string representing a sub-field or item. The string will follow one of these four formats:
-		// 'f:<name>', where <name> is the name of a field in a struct, or key in a map
-		// 'v:<value>', where <value> is the exact json formatted value of a list item
-		// 'i:<index>', where <index> is position of a item in a list
-		// 'k:<keys>', where <keys> is a map of  a list item's key fields to their unique values
-		// If a key maps to an empty Fields value, the field that key represents is part of the set.
+			if err := json.Unmarshal(field.FieldsV1.Raw, &f); err != nil {
+				klog.Error(err)
+			}
+
+			l, ok := f["f:metadata"]
+			if !ok {
+				klog.Info("no metadata field found")
+			}
+
+			labels, ok := l.(map[string]interface{})
+			if !ok {
+				klog.Info("failed to cast l to map")
+			}
+
+			k, ok := labels["f:labels"]
+			if !ok {
+				klog.Info("no f:labels field found")
+			}
+
+			keys, ok := k.(map[string]interface{})
+			if !ok {
+				klog.Info("could not keys")
+			}
+			for k := range keys {
+				klog.Infof("label: %s", strings.TrimPrefix(k, "f:"))
+				oldLabels[strings.TrimPrefix(k, "f:")] = struct{}{}
+			}
+		}
 	}
 
 	klog.Infof("Updating node labels with Linode instance data: %v", instanceData)
@@ -111,22 +132,39 @@ func UpdateNodeLabels(
 		}
 	}
 
-	handleUpdated(SetLabel(node, "decorator.linode.com/label", instanceData.label))
-	handleUpdated(SetLabel(node, "decorator.linode.com/instance-id", instanceData.id))
-	handleUpdated(SetLabel(node, "decorator.linode.com/region", instanceData.region))
-	handleUpdated(SetLabel(node, "decorator.linode.com/instance-type", instanceData.instanceType))
-	handleUpdated(SetLabel(node, "decorator.linode.com/host", instanceData.hostUUID))
+	// handleUpdated(SetLabel(node, "decorator.linode.com/label", instanceData.label))
+	// handleUpdated(SetLabel(node, "decorator.linode.com/instance-id", instanceData.id))
+	// handleUpdated(SetLabel(node, "decorator.linode.com/region", instanceData.region))
+	// handleUpdated(SetLabel(node, "decorator.linode.com/instance-type", instanceData.instanceType))
+	// handleUpdated(SetLabel(node, "decorator.linode.com/host", instanceData.hostUUID))
 
-	oldTags := make(map[string]string, len(node.Labels))
-	maps.Copy(oldTags, node.Labels)
+	// oldTags contains all of the node Labels not just the tags!
+	// oldTags := make(map[string]string, len(node.Labels))
+	// maps.Copy(oldTags, node.Labels)
 
+	// newTags contains the current tags that exist on the node
 	newTags := decorator.ParseTags(instanceData.tags)
+	newTags["decorator.linode.com/label"] = instanceData.label
+	newTags["decorator.linode.com/instance-id"] = instanceData.id
+	newTags["decorator.linode.com/region"] = instanceData.region
+	newTags["decorator.linode.com/instance-type"] = instanceData.instanceType
+	newTags["decorator.linode.com/host"] = instanceData.hostUUID
+	klog.Infof("newTags: %s", newTags)
 
-	for key := range oldTags {
-		if !strings.HasPrefix(key, decorator.TagLabelPrefix) {
-			continue
-		}
+	//for key := range oldTags {
+	//	if !strings.HasPrefix(key, decorator.TagLabelPrefix) {
+	//		continue
+	//	}
+	//	if _, ok := newTags[key]; !ok {
+	//		delete(node.Labels, key)
+	//		labelsUpdated = true
+	//		continue
+	//	}
+	//}
+
+	for key := range oldLabels {
 		if _, ok := newTags[key]; !ok {
+			klog.Infof("key: %s not found, removing", key)
 			delete(node.Labels, key)
 			labelsUpdated = true
 			continue
