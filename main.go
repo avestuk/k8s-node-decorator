@@ -61,6 +61,17 @@ func SetLabel(node *corev1.Node, key, newValue string) (changed bool) {
 	return changed
 }
 
+// instanceWatcherData holds all the common fields that different metadata
+// clients can set as labels on a node
+type instanceWatcherData struct {
+	label        string
+	id           string
+	region       string
+	instanceType string
+	hostUUID     string
+	tags         []string
+}
+
 func UpdateNodeLabels(
 	clientset *kubernetes.Clientset,
 	instanceData *instanceWatcherData,
@@ -139,21 +150,36 @@ func GetClientset() (*kubernetes.Clientset, error) {
 	return clientset, nil
 }
 
-// instanceWatcherData holds all the common fields that different metadata
-// clients can set as labels on a node
-type instanceWatcherData struct {
-	label        string
-	id           string
-	region       string
-	instanceType string
-	hostUUID     string
-	tags         []string
-}
-
 // watcher is the interface that various metadata clients must implement
 type watcher interface {
 	GetInstance(context.Context) (*instanceWatcherData, error)
 	Watch() (<-chan *instanceWatcherData, <-chan error)
+}
+
+func StartDecorator(instanceWatcher watcher, clientset *kubernetes.Clientset) {
+	instanceData, err := instanceWatcher.GetInstance(context.TODO())
+	if err != nil {
+		klog.Fatalf("Failed to get the initial instance data: %s", err.Error())
+	}
+
+	err = UpdateNodeLabels(clientset, instanceData)
+	if err != nil {
+		klog.Error(err)
+	}
+
+	updates, errors := instanceWatcher.Watch()
+
+	for {
+		select {
+		case data := <-updates:
+			err = UpdateNodeLabels(clientset, data)
+			if err != nil {
+				klog.Fatal(err)
+			}
+		case err := <-errors:
+			klog.Errorf("Got error from instance watcher: %s", err)
+		}
+	}
 }
 
 type metadataWatcher struct {
@@ -245,30 +271,23 @@ func (rw *restWatcher) Watch() (<-chan *instanceWatcherData, <-chan error) {
 	return rw.Updates, rw.Errors
 }
 
-func StartDecorator(instanceWatcher watcher, clientset *kubernetes.Clientset) {
-	instanceData, err := instanceWatcher.GetInstance(context.TODO())
+// getNodeID attempts to get the LinodeID from the Kubernetes node.Spec.ProviderID
+func getNodeID(clientset *kubernetes.Clientset) (int, error) {
+	node, err := GetCurrentNode(clientset)
 	if err != nil {
-		klog.Fatalf("Failed to get the initial instance data: %s", err.Error())
+		return 0, fmt.Errorf("failed to get current Kubernetes node, cannot get Provider ID and therefore cannot proceed, got err: %s", err)
 	}
 
-	err = UpdateNodeLabels(clientset, instanceData)
+	if node.Spec.ProviderID == "" {
+		return 0, fmt.Errorf("kubernetes node ProviderID is empty and therefore cannot proceed")
+	}
+
+	linodeID, err := linodeid.ParseProviderID(node.Spec.ProviderID)
 	if err != nil {
-		klog.Error(err)
+		return 0, err
 	}
 
-	updates, errors := instanceWatcher.Watch()
-
-	for {
-		select {
-		case data := <-updates:
-			err = UpdateNodeLabels(clientset, data)
-			if err != nil {
-				klog.Fatal(err)
-			}
-		case err := <-errors:
-			klog.Errorf("Got error from instance watcher: %s", err)
-		}
-	}
+	return linodeID, nil
 }
 
 func main() {
@@ -342,23 +361,4 @@ func main() {
 	}
 
 	StartDecorator(metadataClient, clientset)
-}
-
-// getNodeID attempts to get the LinodeID from the Kubernetes node.Spec.ProviderID
-func getNodeID(clientset *kubernetes.Clientset) (int, error) {
-	node, err := GetCurrentNode(clientset)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get current Kubernetes node, cannot get Provider ID and therefore cannot proceed, got err: %s", err)
-	}
-
-	if node.Spec.ProviderID == "" {
-		return 0, fmt.Errorf("kubernetes node ProviderID is empty and therefore cannot proceed")
-	}
-
-	linodeID, err := linodeid.ParseProviderID(node.Spec.ProviderID)
-	if err != nil {
-		return 0, err
-	}
-
-	return linodeID, nil
 }
