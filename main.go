@@ -36,6 +36,8 @@ import (
 	"github.com/linode/linodego"
 )
 
+const k8sNodeDecorator = "k8s-node-decorator"
+
 var (
 	version  string
 	nodeName string
@@ -100,7 +102,7 @@ func UpdateNodeLabels(
 	handleUpdated(SetLabel(node, "decorator.linode.com/instance-type", instanceData.instanceType))
 	handleUpdated(SetLabel(node, "decorator.linode.com/host", instanceData.hostUUID))
 
-	oldTags := make(map[string]string)
+	oldTags := make(map[string]string, len(node.Labels))
 	maps.Copy(oldTags, node.Labels)
 
 	newTags := decorator.ParseTags(instanceData.tags)
@@ -124,7 +126,9 @@ func UpdateNodeLabels(
 		return nil
 	}
 
-	_, err = clientset.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+	_, err = clientset.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{
+		FieldManager: k8sNodeDecorator,
+	})
 
 	if err != nil {
 		klog.Errorf("Failed to update labels: %s", err.Error())
