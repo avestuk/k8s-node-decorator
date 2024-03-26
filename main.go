@@ -26,6 +26,7 @@ import (
 
 	metadata "github.com/linode/go-metadata"
 	decorator "github.com/linode/k8s-node-decorator/k8snodedecorator"
+	"github.com/linode/linodego"
 )
 
 var version string
@@ -48,47 +49,25 @@ func GetClientset() (*kubernetes.Clientset, error) {
 	return clientset, nil
 }
 
-func StartDecorator(client metadata.Client, clientset *kubernetes.Clientset, interval time.Duration) {
-	instanceData, err := client.GetInstance(context.TODO())
-	if err != nil {
-		klog.Fatalf("Failed to get the initial instance data: %s", err.Error())
-	}
-
-	err = decorator.UpdateNodeLabels(clientset, instanceData)
-	if err != nil {
-		klog.Error(err)
-	}
-
-	instanceWatcher := client.NewInstanceWatcher(
-		metadata.WatcherWithInterval(interval),
-	)
-
-	go instanceWatcher.Start(context.TODO())
-
-	for {
-		select {
-		case data := <-instanceWatcher.Updates:
-			err = decorator.UpdateNodeLabels(clientset, data)
-			if err != nil {
-				klog.Fatal(err)
-			}
-		case err := <-instanceWatcher.Errors:
-			klog.Errorf("Got error from instance watcher: %s", err)
-		}
-	}
-}
-
 func main() {
 	nodeName := os.Getenv("NODE_NAME")
 	if nodeName == "" {
 		klog.Fatal("Environment variable NODE_NAME is not set")
 	}
-	decorator.SetNodeName(nodeName)
 
-	var interval time.Duration
+	var (
+		interval   time.Duration
+		useRESTAPI bool
+	)
 	flag.DurationVar(
 		&interval, "poll-interval", 5*time.Minute,
 		"The time interval to poll and update node information",
+	)
+	flag.BoolVar(
+		&useRESTAPI,
+		"use-rest",
+		false,
+		"Whether to use the Linode REST API instead of the metadata service",
 	)
 	flag.Parse()
 
@@ -100,13 +79,41 @@ func main() {
 		klog.Fatal(err)
 	}
 
-	client, err := metadata.NewClient(
-		context.TODO(),
-		metadata.ClientWithManagedToken(),
-	)
-	if err != nil {
-		klog.Fatal(err)
-	}
+	var watcher decorator.Watcher
+	if !useRESTAPI {
+		klog.Info("using metadata service")
+		client, err := metadata.NewClient(
+			context.Background(),
+			metadata.ClientWithManagedToken(),
+		)
+		if err != nil {
+			klog.Fatal(err)
+		}
+		watcher = &decorator.MetadataWatcher{
+			Client:   *client,
+			Interval: interval,
+			Updates:  make(chan *decorator.InstanceData),
+		}
 
-	StartDecorator(*client, clientset, interval)
+	} else {
+		klog.Info("using rest-api")
+		client, err := linodego.NewClientFromEnv(nil)
+		if err != nil {
+			klog.Fatal(err)
+		}
+
+		linodeID, err := decorator.GetNodeID(clientset, nodeName)
+		if err != nil {
+			klog.Fatal(err)
+		}
+
+		watcher = &decorator.RestWatcher{
+			Client:   *client,
+			Interval: interval,
+			LinodeID: linodeID,
+			Updates:  make(chan *decorator.InstanceData),
+			Errors:   make(chan error),
+		}
+	}
+	decorator.StartDecorator(watcher, clientset, nodeName)
 }
