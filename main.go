@@ -17,11 +17,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
 	metadata "github.com/linode/go-metadata"
@@ -35,10 +37,24 @@ func init() {
 	_ = flag.Set("logtostderr", "true")
 }
 
-func GetClientset() (*kubernetes.Clientset, error) {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, err
+func GetClientset(inCluster bool) (*kubernetes.Clientset, error) {
+	var (
+		config *rest.Config
+		err    error
+	)
+	if inCluster {
+		if config, err = rest.InClusterConfig(); err != nil {
+			return nil, err
+		}
+	} else {
+		kubeconfig, isSet := os.LookupEnv("KUBECONFIG")
+		if !isSet || kubeconfig == "" {
+			return nil, fmt.Errorf("KUBECONFIG not set")
+		}
+		if config, err = clientcmd.BuildConfigFromFlags("", kubeconfig); err != nil {
+			return nil, fmt.Errorf("failed to build config from KUBECONFIG: %s, got err: %w", kubeconfig, err)
+		}
+		klog.Info("using KUBECONFIG")
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
@@ -57,6 +73,7 @@ func main() {
 
 	var (
 		interval   time.Duration
+		inCluster  bool
 		useRESTAPI bool
 	)
 	flag.DurationVar(
@@ -69,12 +86,18 @@ func main() {
 		false,
 		"Whether to use the Linode REST API instead of the metadata service",
 	)
+	flag.BoolVar(
+		&inCluster,
+		"in-cluster",
+		true,
+		"Whether k8s-node-decorator is running in k8s cluster, if false k8s-node-decorator looks for KUBECONFIG envvar",
+	)
 	flag.Parse()
 
 	klog.Infof("Starting Linode Kubernetes Node Decorator: version %s", version)
 	klog.Infof("The poll interval is set to %v.", interval)
 
-	clientset, err := GetClientset()
+	clientset, err := GetClientset(inCluster)
 	if err != nil {
 		klog.Fatal(err)
 	}

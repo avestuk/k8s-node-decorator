@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 )
 
 func GetCurrentNode(clientset *kubernetes.Clientset, nodeName string) (*corev1.Node, error) {
@@ -17,6 +18,7 @@ func GetCurrentNode(clientset *kubernetes.Clientset, nodeName string) (*corev1.N
 
 // GetNodeID attempts to get the LinodeID from the Kubernetes node.Spec.ProviderID
 func GetNodeID(clientset *kubernetes.Clientset, nodeName string) (int, error) {
+	klog.Infof("getting node: %s", nodeName)
 	node, err := GetCurrentNode(clientset, nodeName)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get current Kubernetes node, cannot get Provider ID and therefore cannot proceed, got err: %w", err)
