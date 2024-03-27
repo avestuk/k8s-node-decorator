@@ -10,7 +10,7 @@ import (
 func StartDecorator(watcher Watcher, clientset *kubernetes.Clientset, nodeName string) {
 	klog.LogToStderr(true)
 
-	instanceData, err := watcher.GetInstance(context.TODO())
+	instanceData, err := watcher.getInstance(context.TODO())
 	if err != nil {
 		klog.Fatalf("Failed to get the initial instance data: %s", err.Error())
 	}
@@ -19,7 +19,7 @@ func StartDecorator(watcher Watcher, clientset *kubernetes.Clientset, nodeName s
 		klog.Error(err)
 	}
 
-	updates, errs := watcher.Watch()
+	updates, errs := watcher.watch()
 
 	for {
 		select {

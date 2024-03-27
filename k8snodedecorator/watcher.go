@@ -22,8 +22,8 @@ type InstanceData struct {
 
 // Watcher is the interface that various metadata clients must implement
 type Watcher interface {
-	GetInstance(context.Context) (*InstanceData, error)
-	Watch() (<-chan *InstanceData, <-chan error)
+	getInstance(context.Context) (*InstanceData, error)
+	watch() (<-chan *InstanceData, <-chan error)
 }
 
 type MetadataWatcher struct {
@@ -32,7 +32,7 @@ type MetadataWatcher struct {
 	Updates  chan *InstanceData
 }
 
-func (mw *MetadataWatcher) GetInstance(ctx context.Context) (*InstanceData, error) {
+func (mw *MetadataWatcher) getInstance(ctx context.Context) (*InstanceData, error) {
 	data, err := mw.Client.GetInstance(ctx)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func (mw *MetadataWatcher) GetInstance(ctx context.Context) (*InstanceData, erro
 	}, nil
 }
 
-func (mw *MetadataWatcher) Watch() (<-chan *InstanceData, <-chan error) {
+func (mw *MetadataWatcher) watch() (<-chan *InstanceData, <-chan error) {
 	instanceWatcher := mw.Client.NewInstanceWatcher(
 		metadata.WatcherWithInterval(mw.Interval),
 	)
@@ -80,7 +80,7 @@ type RestWatcher struct {
 	Errors   chan error
 }
 
-func (rw *RestWatcher) GetInstance(context.Context) (*InstanceData, error) {
+func (rw *RestWatcher) getInstance(context.Context) (*InstanceData, error) {
 	data, err := rw.Client.GetInstance(context.TODO(), rw.LinodeID)
 	if err != nil {
 		return nil, err
@@ -96,13 +96,13 @@ func (rw *RestWatcher) GetInstance(context.Context) (*InstanceData, error) {
 	}, nil
 }
 
-func (rw *RestWatcher) Watch() (<-chan *InstanceData, <-chan error) {
+func (rw *RestWatcher) watch() (<-chan *InstanceData, <-chan error) {
 	go func() {
 		ticker := time.NewTicker(rw.Interval)
 
 		for {
 			<-ticker.C
-			data, err := rw.GetInstance(context.TODO())
+			data, err := rw.getInstance(context.TODO())
 			if err != nil {
 				rw.Errors <- err
 			}
