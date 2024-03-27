@@ -38,25 +38,24 @@ type KeyValueTag struct {
 	Value string
 }
 
-func ParseTag(tag string) (result *KeyValueTag) {
+func ParseTag(tag string) *KeyValueTag {
 	separatorIndex := strings.IndexFunc(tag, isSeparator)
 
-	if separatorIndex == 0 {
+	switch separatorIndex {
+	case 0:
 		// tag with separator at index 0 is considered as invalid
 		// e.g. ":foo", "=bar", and "===:::==="
-		result = nil
-	} else if separatorIndex == -1 {
-		result = &KeyValueTag{
+		return nil
+	case -1:
+		return &KeyValueTag{
 			Key: fmt.Sprintf(TagLabelPrefix + tag),
 		}
-	} else {
-		result = &KeyValueTag{
+	default:
+		return &KeyValueTag{
 			Key:   fmt.Sprintf(TagLabelPrefix + tag[:separatorIndex]),
 			Value: tag[separatorIndex+1:],
 		}
 	}
-
-	return result
 }
 
 func ParseTags(tags []string) map[string]string {
