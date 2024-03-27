@@ -16,7 +16,7 @@ package k8snodedecorator
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -59,7 +59,7 @@ func ParseTag(tag string) *KeyValueTag {
 }
 
 func ParseTags(tags []string) map[string]string {
-	sort.Strings(tags)
+	slices.Sort(tags)
 
 	result := make(map[string]string)
 	for _, tag := range tags {
